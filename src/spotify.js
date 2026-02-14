@@ -135,7 +135,7 @@ export async function playTrack(trackUri) {
     if (!deviceId) {
         // Mobile / no SDK: play built-in alarm sound + open Spotify
         console.log('📱 No Playback SDK — using fallback alarm sound');
-        playAlarmSound(15);
+        playAlarmSound();
         openSpotifyDeepLink(trackUri);
         return 'fallback';
     }
@@ -158,7 +158,7 @@ export async function playTrack(trackUri) {
     } catch (err) {
         console.error('Failed to play track:', err);
         // Fallback: play alarm sound + open Spotify
-        playAlarmSound(15);
+        playAlarmSound();
         openSpotifyDeepLink(trackUri);
         return 'fallback';
     }

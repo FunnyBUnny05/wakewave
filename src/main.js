@@ -143,7 +143,7 @@ async function handleAlarmTrigger(alarm) {
 
     // If no track was assigned, always play fallback alarm sound
     if (!alarm.trackUri) {
-        playAlarmSound(10);
+        playAlarmSound();
     }
 
     // Show ringing overlay
