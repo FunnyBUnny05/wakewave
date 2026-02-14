@@ -108,13 +108,23 @@ export function stopAlarmChecker() {
 }
 
 let lastTriggeredKey = '';
+let lastMinuteKey = '';
 
 function checkAlarms() {
     const now = new Date();
     const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     const currentDay = now.getDay();
     const currentSeconds = now.getSeconds();
-    const triggerKey = `${currentTime}-${currentDay}`;
+    // Use full date to prevent cross-day collisions
+    const dateStr = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+    const minuteKey = `${currentTime}-${dateStr}`;
+    const triggerKey = `${minuteKey}-${currentDay}`;
+
+    // Reset lastTriggeredKey when we enter a new minute
+    if (minuteKey !== lastMinuteKey) {
+        lastMinuteKey = minuteKey;
+        lastTriggeredKey = '';
+    }
 
     // Only trigger at second 0 of the matching minute, and only once
     if (currentSeconds !== 0) return;

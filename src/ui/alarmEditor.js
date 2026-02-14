@@ -8,23 +8,23 @@ import { searchTracks, formatDuration } from '../spotify.js';
 let searchTimeout = null;
 
 export function renderEditor(container, { alarmId = null, onSave, onCancel }) {
-    const existing = alarmId ? getAlarm(alarmId) : null;
-    const isEdit = !!existing;
+  const existing = alarmId ? getAlarm(alarmId) : null;
+  const isEdit = !!existing;
 
-    const now = new Date();
-    const defaultTime = existing ? existing.time : `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    const [defaultH, defaultM] = defaultTime.split(':');
+  const now = new Date();
+  const defaultTime = existing ? existing.time : `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  const [defaultH, defaultM] = defaultTime.split(':');
 
-    let selectedTrack = existing ? {
-        uri: existing.trackUri,
-        name: existing.trackName,
-        artist: existing.trackArtist,
-        image: existing.trackImage,
-    } : null;
+  let selectedTrack = existing ? {
+    uri: existing.trackUri,
+    name: existing.trackName,
+    artist: existing.trackArtist,
+    image: existing.trackImage,
+  } : null;
 
-    let selectedDays = existing ? [...existing.days] : [];
+  let selectedDays = existing ? [...existing.days] : [];
 
-    container.innerHTML = `
+  container.innerHTML = `
     <div class="editor-container">
       <div class="editor-header">
         <button class="editor-cancel" id="editor-cancel">Cancel</button>
@@ -69,118 +69,130 @@ export function renderEditor(container, { alarmId = null, onSave, onCancel }) {
     </div>
   `;
 
-    // Render selected song if exists
-    if (selectedTrack && selectedTrack.uri) {
-        renderSelectedSong(selectedTrack);
+  // Render selected song if exists
+  if (selectedTrack && selectedTrack.uri) {
+    renderSelectedSong(selectedTrack);
+  }
+
+  // --- Time Input Handling ---
+  const hoursInput = document.getElementById('time-hours');
+  const minutesInput = document.getElementById('time-minutes');
+
+  hoursInput.addEventListener('input', () => {
+    let v = parseInt(hoursInput.value);
+    if (!isNaN(v) && v > 23) hoursInput.value = '23';
+  });
+
+  minutesInput.addEventListener('input', () => {
+    let v = parseInt(minutesInput.value);
+    if (!isNaN(v) && v > 59) minutesInput.value = '59';
+  });
+
+  function clampAndPad(input, min, max) {
+    let v = parseInt(input.value);
+    if (isNaN(v) || v < min) v = min;
+    if (v > max) v = max;
+    input.value = v.toString().padStart(2, '0');
+  }
+
+  hoursInput.addEventListener('blur', () => clampAndPad(hoursInput, 0, 23));
+  minutesInput.addEventListener('blur', () => clampAndPad(minutesInput, 0, 59));
+
+  // Auto-focus behavior: select all on focus
+  [hoursInput, minutesInput].forEach(input => {
+    input.addEventListener('focus', () => input.select());
+  });
+
+  // --- Days Selector ---
+  const daysContainer = document.getElementById('days-selector');
+  daysContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.day-btn');
+    if (!btn) return;
+    const day = parseInt(btn.dataset.day);
+    const idx = selectedDays.indexOf(day);
+    if (idx > -1) {
+      selectedDays.splice(idx, 1);
+      btn.classList.remove('active');
+    } else {
+      selectedDays.push(day);
+      btn.classList.add('active');
+    }
+  });
+
+  // --- Song Search ---
+  const searchInput = document.getElementById('song-search');
+  const resultsContainer = document.getElementById('song-results');
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    const query = searchInput.value.trim();
+    if (query.length < 2) {
+      resultsContainer.innerHTML = '';
+      return;
     }
 
-    // --- Time Input Handling ---
-    const hoursInput = document.getElementById('time-hours');
-    const minutesInput = document.getElementById('time-minutes');
+    resultsContainer.innerHTML = '<div class="song-search-loading">Searching...</div>';
 
-    hoursInput.addEventListener('input', () => {
-        let v = parseInt(hoursInput.value);
-        if (v > 23) hoursInput.value = '23';
-        if (v < 0) hoursInput.value = '0';
-    });
+    searchTimeout = setTimeout(async () => {
+      try {
+        const tracks = await searchTracks(query);
+        renderSearchResults(tracks, resultsContainer, (track) => {
+          selectedTrack = track;
+          renderSelectedSong(track);
+          resultsContainer.innerHTML = '';
+          searchInput.value = '';
+        });
+      } catch (err) {
+        resultsContainer.innerHTML = '<div class="song-search-loading">Search failed. Try again.</div>';
+      }
+    }, 400);
+  });
 
-    minutesInput.addEventListener('input', () => {
-        let v = parseInt(minutesInput.value);
-        if (v > 59) minutesInput.value = '59';
-        if (v < 0) minutesInput.value = '0';
-    });
+  // --- Save ---
+  document.getElementById('editor-save').addEventListener('click', () => {
+    let h = parseInt(hoursInput.value);
+    let m = parseInt(minutesInput.value);
+    if (isNaN(h) || h < 0) h = 0;
+    if (isNaN(m) || m < 0) m = 0;
+    if (h > 23) h = 23;
+    if (m > 59) m = 59;
+    const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    const label = document.getElementById('alarm-label').value.trim();
 
-    // Auto-focus behavior: select all on focus
-    [hoursInput, minutesInput].forEach(input => {
-        input.addEventListener('focus', () => input.select());
-    });
+    const alarmData = {
+      time,
+      label,
+      trackUri: selectedTrack?.uri || '',
+      trackName: selectedTrack?.name || '',
+      trackArtist: selectedTrack?.artist || '',
+      trackImage: selectedTrack?.image || '',
+      enabled: true,
+      days: selectedDays,
+    };
 
-    // --- Days Selector ---
-    const daysContainer = document.getElementById('days-selector');
-    daysContainer.addEventListener('click', (e) => {
-        const btn = e.target.closest('.day-btn');
-        if (!btn) return;
-        const day = parseInt(btn.dataset.day);
-        const idx = selectedDays.indexOf(day);
-        if (idx > -1) {
-            selectedDays.splice(idx, 1);
-            btn.classList.remove('active');
-        } else {
-            selectedDays.push(day);
-            btn.classList.add('active');
-        }
-    });
+    if (isEdit) {
+      updateAlarm(alarmId, alarmData);
+    } else {
+      createAlarm(alarmData);
+    }
 
-    // --- Song Search ---
-    const searchInput = document.getElementById('song-search');
-    const resultsContainer = document.getElementById('song-results');
+    onSave();
+  });
 
-    searchInput.addEventListener('input', () => {
-        clearTimeout(searchTimeout);
-        const query = searchInput.value.trim();
-        if (query.length < 2) {
-            resultsContainer.innerHTML = '';
-            return;
-        }
-
-        resultsContainer.innerHTML = '<div class="song-search-loading">Searching...</div>';
-
-        searchTimeout = setTimeout(async () => {
-            try {
-                const tracks = await searchTracks(query);
-                renderSearchResults(tracks, resultsContainer, (track) => {
-                    selectedTrack = track;
-                    renderSelectedSong(track);
-                    resultsContainer.innerHTML = '';
-                    searchInput.value = '';
-                });
-            } catch (err) {
-                resultsContainer.innerHTML = '<div class="song-search-loading">Search failed. Try again.</div>';
-            }
-        }, 400);
-    });
-
-    // --- Save ---
-    document.getElementById('editor-save').addEventListener('click', () => {
-        const hours = hoursInput.value.padStart(2, '0');
-        const minutes = minutesInput.value.padStart(2, '0');
-        const time = `${hours}:${minutes}`;
-        const label = document.getElementById('alarm-label').value.trim();
-
-        const alarmData = {
-            time,
-            label,
-            trackUri: selectedTrack?.uri || '',
-            trackName: selectedTrack?.name || '',
-            trackArtist: selectedTrack?.artist || '',
-            trackImage: selectedTrack?.image || '',
-            enabled: true,
-            days: selectedDays,
-        };
-
-        if (isEdit) {
-            updateAlarm(alarmId, alarmData);
-        } else {
-            createAlarm(alarmData);
-        }
-
-        onSave();
-    });
-
-    // --- Cancel ---
-    document.getElementById('editor-cancel').addEventListener('click', onCancel);
+  // --- Cancel ---
+  document.getElementById('editor-cancel').addEventListener('click', onCancel);
 }
 
 function renderSelectedSong(track) {
-    const container = document.getElementById('selected-song-container');
-    if (!container) return;
+  const container = document.getElementById('selected-song-container');
+  if (!container) return;
 
-    if (!track || !track.uri) {
-        container.innerHTML = '';
-        return;
-    }
+  if (!track || !track.uri) {
+    container.innerHTML = '';
+    return;
+  }
 
-    container.innerHTML = `
+  container.innerHTML = `
     <div class="selected-song">
       <img class="selected-song-art" src="${track.image || ''}" alt="" />
       <div class="selected-song-info">
@@ -191,22 +203,22 @@ function renderSelectedSong(track) {
     </div>
   `;
 
-    document.getElementById('remove-song').addEventListener('click', () => {
-        track.uri = '';
-        track.name = '';
-        track.artist = '';
-        track.image = '';
-        container.innerHTML = '';
-    });
+  document.getElementById('remove-song').addEventListener('click', () => {
+    track.uri = '';
+    track.name = '';
+    track.artist = '';
+    track.image = '';
+    container.innerHTML = '';
+  });
 }
 
 function renderSearchResults(tracks, container, onSelect) {
-    if (tracks.length === 0) {
-        container.innerHTML = '<div class="song-search-loading">No results found</div>';
-        return;
-    }
+  if (tracks.length === 0) {
+    container.innerHTML = '<div class="song-search-loading">No results found</div>';
+    return;
+  }
 
-    container.innerHTML = tracks.map(track => `
+  container.innerHTML = tracks.map(track => `
     <div class="song-result-item" data-uri="${track.uri}">
       <img class="song-result-art" src="${track.imageSmall || track.image}" alt="" loading="lazy" />
       <div class="song-result-info">
@@ -218,9 +230,9 @@ function renderSearchResults(tracks, container, onSelect) {
     </div>
   `).join('');
 
-    container.querySelectorAll('.song-result-item').forEach((el, i) => {
-        el.addEventListener('click', () => {
-            onSelect(tracks[i]);
-        });
+  container.querySelectorAll('.song-result-item').forEach((el, i) => {
+    el.addEventListener('click', () => {
+      onSelect(tracks[i]);
     });
+  });
 }

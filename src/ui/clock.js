@@ -4,7 +4,16 @@
 
 import { getAlarms, getNextAlarmTime, formatTimeUntil } from '../alarms.js';
 
-let clockInterval = null;
+let animFrameId = null;
+let lastSecond = -1;
+
+// Cache element references to avoid DOM lookups every frame
+let elH = null;
+let elM = null;
+let elS = null;
+let elDate = null;
+let elNextAlarmDisplay = null;
+let elNextAlarmText = null;
 
 export function renderClock(container) {
     container.innerHTML = `
@@ -20,47 +29,63 @@ export function renderClock(container) {
     </div>
   `;
 
-    updateClock();
-    if (clockInterval) clearInterval(clockInterval);
-    clockInterval = setInterval(updateClock, 1000);
+    // Cache element references
+    elH = document.getElementById('clock-h');
+    elM = document.getElementById('clock-m');
+    elS = document.getElementById('clock-s');
+    elDate = document.getElementById('clock-date');
+    elNextAlarmDisplay = document.getElementById('next-alarm-display');
+    elNextAlarmText = document.getElementById('next-alarm-text');
+
+    lastSecond = -1;
+    tick();
 }
 
-function updateClock() {
+function tick() {
     const now = new Date();
-    const h = document.getElementById('clock-h');
-    const m = document.getElementById('clock-m');
-    const s = document.getElementById('clock-s');
-    const d = document.getElementById('clock-date');
+    const currentSecond = now.getSeconds();
 
-    if (h) h.textContent = now.getHours().toString().padStart(2, '0');
-    if (m) m.textContent = now.getMinutes().toString().padStart(2, '0');
-    if (s) s.textContent = now.getSeconds().toString().padStart(2, '0');
+    // Only update DOM when the second actually changes
+    if (currentSecond !== lastSecond) {
+        lastSecond = currentSecond;
 
-    if (d) {
-        d.textContent = now.toLocaleDateString('en-US', {
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-        });
-    }
+        const hStr = now.getHours().toString().padStart(2, '0');
+        const mStr = now.getMinutes().toString().padStart(2, '0');
+        const sStr = currentSecond.toString().padStart(2, '0');
 
-    // Next alarm
-    const nextAlarmDisplay = document.getElementById('next-alarm-display');
-    const nextAlarmText = document.getElementById('next-alarm-text');
-    if (nextAlarmDisplay && nextAlarmText) {
-        const next = getNextAlarmTime(getAlarms());
-        if (next) {
-            nextAlarmDisplay.style.display = '';
-            nextAlarmText.textContent = `Next alarm in ${formatTimeUntil(next.diff)} — ${next.alarm.time}`;
-        } else {
-            nextAlarmDisplay.style.display = 'none';
+        if (elH && elH.textContent !== hStr) elH.textContent = hStr;
+        if (elM && elM.textContent !== mStr) elM.textContent = mStr;
+        if (elS) elS.textContent = sStr;
+
+        // Update date only when the minute changes
+        if (elDate && (currentSecond === 0 || elDate.textContent === '--')) {
+            elDate.textContent = now.toLocaleDateString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+            });
+        }
+
+        // Update next alarm display every 30 seconds to avoid unnecessary work
+        if (elNextAlarmDisplay && elNextAlarmText && (currentSecond % 30 === 0 || currentSecond === lastSecond)) {
+            const next = getNextAlarmTime(getAlarms());
+            if (next) {
+                elNextAlarmDisplay.style.display = '';
+                elNextAlarmText.textContent = `Next alarm in ${formatTimeUntil(next.diff)} — ${next.alarm.time}`;
+            } else {
+                elNextAlarmDisplay.style.display = 'none';
+            }
         }
     }
+
+    animFrameId = requestAnimationFrame(tick);
 }
 
 export function destroyClock() {
-    if (clockInterval) {
-        clearInterval(clockInterval);
-        clockInterval = null;
+    if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
     }
+    lastSecond = -1;
+    elH = elM = elS = elDate = elNextAlarmDisplay = elNextAlarmText = null;
 }
