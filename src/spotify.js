@@ -126,14 +126,18 @@ export function initPlayer() {
     });
 }
 
+import { playAlarmSound, stopAlarmSound, openSpotifyDeepLink } from './alarmSound.js';
+
 export async function playTrack(trackUri) {
     await ensureValidToken();
     const token = getAccessToken();
 
     if (!deviceId) {
-        // Fallback: open in Spotify app
-        window.open(`https://open.spotify.com/track/${trackUri.split(':')[2]}`, '_blank');
-        return false;
+        // Mobile / no SDK: play built-in alarm sound + open Spotify
+        console.log('📱 No Playback SDK — using fallback alarm sound');
+        playAlarmSound(15);
+        openSpotifyDeepLink(trackUri);
+        return 'fallback';
     }
 
     try {
@@ -153,9 +157,10 @@ export async function playTrack(trackUri) {
         return true;
     } catch (err) {
         console.error('Failed to play track:', err);
-        // Fallback
-        window.open(`https://open.spotify.com/track/${trackUri.split(':')[2]}`, '_blank');
-        return false;
+        // Fallback: play alarm sound + open Spotify
+        playAlarmSound(15);
+        openSpotifyDeepLink(trackUri);
+        return 'fallback';
     }
 }
 
@@ -178,6 +183,9 @@ async function fadeInVolume(durationSeconds) {
 }
 
 export async function pausePlayback() {
+    // Stop fallback alarm sound
+    stopAlarmSound();
+    // Stop Spotify player
     if (player) {
         await player.pause().catch(() => { });
     }

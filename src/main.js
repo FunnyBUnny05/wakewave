@@ -10,6 +10,7 @@ import { renderClock, destroyClock } from './ui/clock.js';
 import { renderAlarmList, destroyAlarmList } from './ui/alarmList.js';
 import { renderEditor } from './ui/alarmEditor.js';
 import { renderRingingOverlay } from './ui/alarmRinging.js';
+import { unlockAudio, playAlarmSound } from './alarmSound.js';
 
 // --- DOM References ---
 const loadingScreen = document.getElementById('loading-screen');
@@ -137,8 +138,13 @@ function showEditorView(alarmId) {
 async function handleAlarmTrigger(alarm) {
     console.log('🔔 Alarm triggered:', alarm);
 
-    // Play the track
-    await triggerAlarmPlayback(alarm);
+    // Play the track (or fallback alarm sound)
+    const result = await triggerAlarmPlayback(alarm);
+
+    // If no track was assigned, always play fallback alarm sound
+    if (!alarm.trackUri) {
+        playAlarmSound(10);
+    }
 
     // Show ringing overlay
     renderRingingOverlay(ringingOverlay, alarm, () => {
@@ -156,6 +162,14 @@ async function handleAlarmTrigger(alarm) {
         });
     }
 }
+
+// --- Unlock audio on first user interaction (required for iOS) ---
+const unlockEvents = ['touchstart', 'touchend', 'click', 'keydown'];
+function handleUnlock() {
+    unlockAudio();
+    unlockEvents.forEach(e => document.removeEventListener(e, handleUnlock));
+}
+unlockEvents.forEach(e => document.addEventListener(e, handleUnlock, { once: false, passive: true }));
 
 // Request notification permission
 if ('Notification' in window && Notification.permission === 'default') {
