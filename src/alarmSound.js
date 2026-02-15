@@ -1,206 +1,242 @@
 // ============================================
-// Fallback Alarm Sound — iOS-Compatible
-// Uses <audio> element + generated WAV for
-// maximum compatibility with mobile Safari.
+// Alarm Sound — iOS Safari Compatible
 // ============================================
+//
+// iOS Safari has 3 strict requirements for audio:
+// 1. audio.play() must first be called during a user gesture
+// 2. Changing <audio> src after unlock invalidates the unlock
+// 3. setInterval is throttled/paused in background tabs
+//
+// Solution:
+// - Pre-generate the alarm WAV at startup
+// - Set it as the src and play+pause during user gesture (unlock)
+// - When alarm fires, just call play() — src is already set
+// - Keep a silent audio loop running to maintain audio session
 
-let audioElement = null;
+let alarmAudio = null;    // The alarm tone player
+let keepaliveAudio = null; // Silent loop to keep audio session alive
+let alarmBlobUrl = null;
 let isUnlocked = false;
 let alarmPlaying = false;
 
-// --- Generate a WAV alarm tone as a Blob URL ---
-// This creates a real audio file in memory — no external files needed.
+// =============================================
+// WAV Generator — builds alarm tone in memory
+// =============================================
 
 function generateAlarmWav() {
     const sampleRate = 44100;
-    const duration = 60; // 60 seconds of alarm audio
+    const duration = 120; // 2 minutes
     const numSamples = sampleRate * duration;
     const buffer = new ArrayBuffer(44 + numSamples * 2);
     const view = new DataView(buffer);
 
     // WAV header
-    writeString(view, 0, 'RIFF');
+    const writeStr = (offset, str) => {
+        for (let i = 0; i < str.length; i++)
+            view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
     view.setUint32(4, 36 + numSamples * 2, true);
-    writeString(view, 8, 'WAVE');
-    writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true); // chunk size
-    view.setUint16(20, 1, true);  // PCM
-    view.setUint16(22, 1, true);  // mono
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);   // PCM
+    view.setUint16(22, 1, true);   // Mono
     view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // byte rate
-    view.setUint16(32, 2, true);  // block align
-    view.setUint16(34, 16, true); // bits per sample
-    writeString(view, 36, 'data');
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
     view.setUint32(40, numSamples * 2, true);
 
-    // Generate alarm pattern:
-    // Repeating pattern: 3 beeps at 880Hz, pause, 3 beeps at 1047Hz, pause
-    // Each beep: 120ms on, 80ms off
-    // Pattern repeats every 1.6 seconds
-    // Volume fades in over first 15 seconds
-
-    const freq1 = 880;   // A5
-    const freq2 = 1047;  // C6
-    const beepOnSamples = Math.floor(0.12 * sampleRate);   // 120ms on
-    const beepOffSamples = Math.floor(0.08 * sampleRate);   // 80ms off
-    const beepCycle = beepOnSamples + beepOffSamples;
-    const groupGap = Math.floor(0.2 * sampleRate);           // 200ms gap between groups
-    const patternLength = beepCycle * 3 + groupGap + beepCycle * 3 + groupGap;
-    const fadeInSamples = 15 * sampleRate; // 15 second fade-in
+    // Alarm pattern: 3 beeps @ 880Hz, gap, 3 beeps @ 1047Hz, gap
+    const freq1 = 880, freq2 = 1047;
+    const beepOn = Math.floor(0.12 * sampleRate);
+    const beepOff = Math.floor(0.08 * sampleRate);
+    const beepCycle = beepOn + beepOff;
+    const groupGap = Math.floor(0.25 * sampleRate);
+    const patternLen = beepCycle * 3 + groupGap + beepCycle * 3 + groupGap;
+    const fadeInSamples = 10 * sampleRate; // 10 second fade-in
+    const attackSamples = Math.floor(0.005 * sampleRate);
 
     for (let i = 0; i < numSamples; i++) {
-        const posInPattern = i % patternLength;
+        const pos = i % patternLen;
         const t = i / sampleRate;
-
-        // Determine if we're in a beep or silence
         let sample = 0;
-        const group1End = beepCycle * 3;
-        const group2Start = group1End + groupGap;
-        const group2End = group2Start + beepCycle * 3;
 
-        if (posInPattern < group1End) {
-            // Group 1: 880Hz beeps
-            const posInBeep = posInPattern % beepCycle;
-            if (posInBeep < beepOnSamples) {
+        const g1End = beepCycle * 3;
+        const g2Start = g1End + groupGap;
+        const g2End = g2Start + beepCycle * 3;
+
+        let posInBeep = -1;
+        if (pos < g1End) {
+            const p = pos % beepCycle;
+            if (p < beepOn) {
                 sample = Math.sin(2 * Math.PI * freq1 * t);
+                posInBeep = p;
             }
-        } else if (posInPattern >= group2Start && posInPattern < group2End) {
-            // Group 2: 1047Hz beeps
-            const posInGroup = posInPattern - group2Start;
-            const posInBeep = posInGroup % beepCycle;
-            if (posInBeep < beepOnSamples) {
+        } else if (pos >= g2Start && pos < g2End) {
+            const p = (pos - g2Start) % beepCycle;
+            if (p < beepOn) {
                 sample = Math.sin(2 * Math.PI * freq2 * t);
+                posInBeep = p;
             }
         }
 
-        // Apply fade-in envelope
-        let volume = 1.0;
-        if (i < fadeInSamples) {
-            volume = i / fadeInSamples;
-        }
-
-        // Apply soft envelope to each beep to avoid clicks
-        if (sample !== 0) {
-            const posInBeep = (posInPattern < group1End)
-                ? (posInPattern % beepCycle)
-                : ((posInPattern - group2Start) % beepCycle);
-            // Smooth attack and release (first/last 5ms)
-            const attackSamples = Math.floor(0.005 * sampleRate);
+        // Smooth attack/release envelope per beep
+        if (sample !== 0 && posInBeep >= 0) {
             if (posInBeep < attackSamples) {
                 sample *= posInBeep / attackSamples;
-            } else if (posInBeep > beepOnSamples - attackSamples) {
-                sample *= (beepOnSamples - posInBeep) / attackSamples;
+            } else if (posInBeep > beepOn - attackSamples) {
+                sample *= (beepOn - posInBeep) / attackSamples;
             }
         }
 
-        sample *= volume * 0.8; // Overall volume at 80%
+        // Fade-in over first 10 seconds
+        let vol = i < fadeInSamples ? i / fadeInSamples : 1.0;
+        sample *= vol * 0.85;
 
-        const intSample = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
-        view.setInt16(44 + i * 2, intSample, true);
+        view.setInt16(44 + i * 2,
+            Math.max(-32768, Math.min(32767, Math.floor(sample * 32767))), true);
     }
 
-    const blob = new Blob([buffer], { type: 'audio/wav' });
-    return URL.createObjectURL(blob);
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
 }
 
-function writeString(view, offset, str) {
-    for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-    }
+// Tiny silent WAV for the keepalive loop
+function generateSilentWav() {
+    const sampleRate = 22050;
+    const duration = 5; // 5 second loop
+    const numSamples = sampleRate * duration;
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset, str) => {
+        for (let i = 0; i < str.length; i++)
+            view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+    // All samples default to 0 = silence
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
 }
 
-// --- Pre-create the audio element ---
-// We create the <audio> element once and reuse it.
+// =============================================
+// Audio Element Setup — CRITICAL for iOS
+// The alarm WAV is set as src ONCE and never changed
+// =============================================
 
-function getAudioElement() {
-    if (!audioElement) {
-        audioElement = document.createElement('audio');
-        audioElement.setAttribute('playsinline', '');
-        audioElement.setAttribute('webkit-playsinline', '');
-        audioElement.loop = true;
-        audioElement.volume = 1.0;
-        // Some mobile browsers need it in the DOM
-        audioElement.style.display = 'none';
-        document.body.appendChild(audioElement);
-    }
-    return audioElement;
-}
+function ensureAlarmAudio() {
+    if (alarmAudio) return alarmAudio;
 
-// --- Unlock Audio (call on user gesture) ---
-// iOS Safari requires .play() to be called from a user gesture
-// at least once before programmatic playback is allowed.
-
-export function unlockAudio() {
-    if (isUnlocked) return;
-
-    const audio = getAudioElement();
-
-    // Create a tiny silent WAV (0.1 seconds of silence)
-    const silentSamples = 4410;
-    const buf = new ArrayBuffer(44 + silentSamples * 2);
-    const v = new DataView(buf);
-    writeString(v, 0, 'RIFF');
-    v.setUint32(4, 36 + silentSamples * 2, true);
-    writeString(v, 8, 'WAVE');
-    writeString(v, 12, 'fmt ');
-    v.setUint32(16, 16, true);
-    v.setUint16(20, 1, true);
-    v.setUint16(22, 1, true);
-    v.setUint32(24, 44100, true);
-    v.setUint32(28, 88200, true);
-    v.setUint16(32, 2, true);
-    v.setUint16(34, 16, true);
-    writeString(v, 36, 'data');
-    v.setUint32(40, silentSamples * 2, true);
-    // Samples are already 0 (silence)
-
-    const silentBlob = new Blob([buf], { type: 'audio/wav' });
-    const silentUrl = URL.createObjectURL(silentBlob);
-
-    audio.src = silentUrl;
-    const playPromise = audio.play();
-    if (playPromise) {
-        playPromise.then(() => {
-            // Immediately pause — we just needed to "unlock" it
-            setTimeout(() => {
-                audio.pause();
-                audio.currentTime = 0;
-                URL.revokeObjectURL(silentUrl);
-                isUnlocked = true;
-                console.log('🔊 Audio element unlocked for future playback');
-            }, 100);
-        }).catch(err => {
-            console.warn('Audio unlock failed:', err);
-        });
-    }
-}
-
-// --- Play Alarm Sound ---
-
-let alarmBlobUrl = null;
-
-export function playAlarmSound() {
-    const audio = getAudioElement();
-
-    // Generate the alarm WAV if not already generated
+    // Generate alarm tone
     if (!alarmBlobUrl) {
         alarmBlobUrl = generateAlarmWav();
     }
 
-    audio.src = alarmBlobUrl;
-    audio.loop = true;
-    audio.volume = 1.0;
-    audio.currentTime = 0;
+    // Create audio element with alarm src set immediately
+    alarmAudio = document.createElement('audio');
+    alarmAudio.setAttribute('playsinline', '');
+    alarmAudio.setAttribute('webkit-playsinline', '');
+    alarmAudio.preload = 'auto';
+    alarmAudio.loop = true;
+    alarmAudio.volume = 1.0;
+    alarmAudio.src = alarmBlobUrl; // Set src ONCE, never change it
+    alarmAudio.load(); // Force preload
+    alarmAudio.style.display = 'none';
+    document.body.appendChild(alarmAudio);
 
-    const playPromise = audio.play();
-    if (playPromise) {
-        playPromise.then(() => {
-            console.log('🔔 Alarm sound playing');
+    return alarmAudio;
+}
+
+function ensureKeepaliveAudio() {
+    if (keepaliveAudio) return keepaliveAudio;
+
+    const silentUrl = generateSilentWav();
+    keepaliveAudio = document.createElement('audio');
+    keepaliveAudio.setAttribute('playsinline', '');
+    keepaliveAudio.setAttribute('webkit-playsinline', '');
+    keepaliveAudio.loop = true;
+    keepaliveAudio.volume = 0.001; // Nearly silent but not zero
+    keepaliveAudio.src = silentUrl;
+    keepaliveAudio.load();
+    keepaliveAudio.style.display = 'none';
+    document.body.appendChild(keepaliveAudio);
+
+    return keepaliveAudio;
+}
+
+// =============================================
+// Unlock Audio — call during user gesture
+// This is THE critical step for iOS.
+// We play+pause the ACTUAL alarm audio (not a
+// different file), and start the silent keepalive.
+// =============================================
+
+export function unlockAudio() {
+    if (isUnlocked) return;
+
+    const alarm = ensureAlarmAudio();
+    const keepalive = ensureKeepaliveAudio();
+
+    // Play the actual alarm audio and immediately pause
+    // This "registers" this audio element as user-gesture-approved
+    const p1 = alarm.play();
+    if (p1) {
+        p1.then(() => {
+            alarm.pause();
+            alarm.currentTime = 0;
+            console.log('🔊 Alarm audio unlocked (iOS)');
+        }).catch(e => {
+            console.warn('Alarm unlock attempt failed:', e.message);
+        });
+    }
+
+    // Start silent keepalive loop to maintain audio session
+    const p2 = keepalive.play();
+    if (p2) {
+        p2.then(() => {
+            console.log('🔇 Keepalive audio running');
+        }).catch(e => {
+            console.warn('Keepalive start failed:', e.message);
+        });
+    }
+
+    isUnlocked = true;
+}
+
+// =============================================
+// Play / Stop Alarm
+// Since src is already set, just play() — iOS allows it
+// =============================================
+
+export function playAlarmSound() {
+    const alarm = ensureAlarmAudio();
+    alarm.currentTime = 0;
+    alarm.volume = 1.0;
+    alarm.loop = true;
+
+    const p = alarm.play();
+    if (p) {
+        p.then(() => {
+            console.log('🔔 Alarm sound playing!');
             alarmPlaying = true;
-        }).catch(err => {
-            console.error('Alarm sound play failed:', err);
-            // Last resort: try to resume and play again
-            audio.play().catch(() => { });
+        }).catch(e => {
+            console.error('❌ Alarm play failed:', e.message);
+            // Last resort: try again
+            setTimeout(() => {
+                alarm.play().catch(() => { });
+            }, 100);
         });
     }
 
@@ -208,12 +244,10 @@ export function playAlarmSound() {
     return true;
 }
 
-// --- Stop Alarm Sound ---
-
 export function stopAlarmSound() {
-    if (audioElement) {
-        audioElement.pause();
-        audioElement.currentTime = 0;
+    if (alarmAudio) {
+        alarmAudio.pause();
+        alarmAudio.currentTime = 0;
     }
     alarmPlaying = false;
 }
@@ -222,25 +256,22 @@ export function isAlarmSoundPlaying() {
     return alarmPlaying;
 }
 
-// --- Spotify Deep Link (mobile fallback) ---
+// =============================================
+// Spotify Deep Link (mobile fallback)
+// =============================================
 
 export function openSpotifyDeepLink(trackUri) {
     if (!trackUri) return;
-
     const trackId = trackUri.split(':')[2];
     if (!trackId) return;
 
-    const spotifyAppUrl = `spotify:track:${trackId}`;
-    const spotifyWebUrl = `https://open.spotify.com/track/${trackId}`;
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
     if (isMobile) {
-        // Try Spotify app URI scheme first
-        window.location.href = spotifyAppUrl;
+        window.location.href = `spotify:track:${trackId}`;
         setTimeout(() => {
-            window.open(spotifyWebUrl, '_blank');
+            window.open(`https://open.spotify.com/track/${trackId}`, '_blank');
         }, 2500);
     } else {
-        window.open(spotifyWebUrl, '_blank');
+        window.open(`https://open.spotify.com/track/${trackId}`, '_blank');
     }
 }

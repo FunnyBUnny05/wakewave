@@ -78,7 +78,7 @@ function renderMainView() {
     header.innerHTML = `
     <div class="header-left">
       <div class="header-logo">WakeWave</div>
-      <span class="header-version">v1.3</span>
+      <span class="header-version">v1.4</span>
     </div>
     <div class="header-user">
       ${currentUser?.images?.[0]?.url
