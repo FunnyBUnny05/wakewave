@@ -209,15 +209,19 @@ export function unlockAudio() {
     const alarm = ensureAlarmAudio();
     const keepalive = ensureKeepaliveAudio();
 
-    // Play the actual alarm audio and immediately pause
-    // This "registers" this audio element as user-gesture-approved
+    // Mute before playing — iOS needs a play() call to "register" the
+    // audio element, but the user shouldn't hear anything yet
+    alarm.volume = 0;
+
     const p1 = alarm.play();
     if (p1) {
         p1.then(() => {
             alarm.pause();
             alarm.currentTime = 0;
+            alarm.volume = 1.0; // Restore volume for real alarm
             console.log('🔊 Alarm audio unlocked (iOS)');
         }).catch(e => {
+            alarm.volume = 1.0;
             console.warn('Alarm unlock attempt failed:', e.message);
         });
     }
