@@ -49,52 +49,72 @@ function generateAlarmWav() {
     writeStr(36, 'data');
     view.setUint32(40, numSamples * 2, true);
 
-    // Alarm pattern: 3 beeps @ 880Hz, gap, 3 beeps @ 1047Hz, gap
-    const freq1 = 880, freq2 = 1047;
-    const beepOn = Math.floor(0.12 * sampleRate);
-    const beepOff = Math.floor(0.08 * sampleRate);
-    const beepCycle = beepOn + beepOff;
-    const groupGap = Math.floor(0.25 * sampleRate);
-    const patternLen = beepCycle * 3 + groupGap + beepCycle * 3 + groupGap;
-    const fadeInSamples = 10 * sampleRate; // 10 second fade-in
-    const attackSamples = Math.floor(0.005 * sampleRate);
+    // ========================================
+    // Gentle ascending chime alarm
+    // Musical notes: C5 → E5 → G5 → C6
+    // Each chime has a soft attack and long decay
+    // Pattern repeats every ~3.2 seconds with a pause
+    // ========================================
+
+    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+    const chimeDuration = 0.45;    // Each chime rings for 450ms
+    const chimeGap = 0.12;         // 120ms between chimes
+    const chimeStep = chimeDuration + chimeGap;
+    const groupPause = 1.6;        // 1.6s pause between note groups
+    const groupDuration = chimeStep * notes.length + groupPause;
+    const patternLen = Math.floor(groupDuration * sampleRate);
+
+    const fadeInSamples = 15 * sampleRate; // 15 second gentle fade-in
+    const attackMs = 0.025; // 25ms soft attack
+    const releaseMs = 0.35; // 350ms long release (bell-like decay)
+    const attackSamples = Math.floor(attackMs * sampleRate);
+    const releaseSamples = Math.floor(releaseMs * sampleRate);
+    const chimeSamples = Math.floor(chimeDuration * sampleRate);
 
     for (let i = 0; i < numSamples; i++) {
         const pos = i % patternLen;
         const t = i / sampleRate;
         let sample = 0;
 
-        const g1End = beepCycle * 3;
-        const g2Start = g1End + groupGap;
-        const g2End = g2Start + beepCycle * 3;
+        // Which chime in the group?
+        const posInGroup = pos / sampleRate;
+        const chimeIdx = Math.floor(posInGroup / chimeStep);
+        const posInChime = Math.floor((posInGroup - chimeIdx * chimeStep) * sampleRate);
 
-        let posInBeep = -1;
-        if (pos < g1End) {
-            const p = pos % beepCycle;
-            if (p < beepOn) {
-                sample = Math.sin(2 * Math.PI * freq1 * t);
-                posInBeep = p;
+        if (chimeIdx < notes.length && posInChime >= 0 && posInChime < chimeSamples) {
+            const freq = notes[chimeIdx];
+            const tLocal = posInChime / sampleRate;
+
+            // Fundamental + soft harmonics for richness
+            sample = Math.sin(2 * Math.PI * freq * tLocal) * 0.65
+                + Math.sin(2 * Math.PI * freq * 2 * tLocal) * 0.20
+                + Math.sin(2 * Math.PI * freq * 3 * tLocal) * 0.10
+                + Math.sin(2 * Math.PI * freq * 4 * tLocal) * 0.05;
+
+            // Smooth attack envelope
+            if (posInChime < attackSamples) {
+                sample *= posInChime / attackSamples;
             }
-        } else if (pos >= g2Start && pos < g2End) {
-            const p = (pos - g2Start) % beepCycle;
-            if (p < beepOn) {
-                sample = Math.sin(2 * Math.PI * freq2 * t);
-                posInBeep = p;
+
+            // Exponential decay (bell-like)
+            const decayStart = chimeSamples - releaseSamples;
+            if (posInChime > decayStart) {
+                const decayProgress = (posInChime - decayStart) / releaseSamples;
+                sample *= Math.pow(1 - decayProgress, 2); // Quadratic decay
             }
+
+            // Overall bell envelope — gentle amplitude curve
+            const lifeRatio = posInChime / chimeSamples;
+            sample *= Math.exp(-lifeRatio * 2.5); // Natural bell decay
         }
 
-        // Smooth attack/release envelope per beep
-        if (sample !== 0 && posInBeep >= 0) {
-            if (posInBeep < attackSamples) {
-                sample *= posInBeep / attackSamples;
-            } else if (posInBeep > beepOn - attackSamples) {
-                sample *= (beepOn - posInBeep) / attackSamples;
-            }
-        }
-
-        // Fade-in over first 10 seconds
+        // Global fade-in over 15 seconds
         let vol = i < fadeInSamples ? i / fadeInSamples : 1.0;
-        sample *= vol * 0.85;
+        // Ease-in curve for gentler start
+        if (i < fadeInSamples) {
+            vol = vol * vol; // Quadratic ease-in
+        }
+        sample *= vol * 0.75;
 
         view.setInt16(44 + i * 2,
             Math.max(-32768, Math.min(32767, Math.floor(sample * 32767))), true);
