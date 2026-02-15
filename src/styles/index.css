@@ -245,6 +245,27 @@ body::before {
   font-size: 1.4rem;
 }
 
+/* Version Badge */
+.app-version {
+  margin-top: 48px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+  letter-spacing: 0.5px;
+}
+
+.header-version {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  opacity: 0.6;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
 /* ============ Header ============ */
 .app-header {
   display: flex;

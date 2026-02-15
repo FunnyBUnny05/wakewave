@@ -5,7 +5,7 @@
 import { redirectToSpotifyAuth, setClientId, hasClientId } from '../auth.js';
 
 export function renderLogin(container) {
-    container.innerHTML = `
+  container.innerHTML = `
     <div class="login-container">
       <svg class="login-logo" viewBox="0 0 96 96" fill="none">
         <defs>
@@ -78,51 +78,53 @@ export function renderLogin(container) {
           <span>Repeat on any day</span>
         </div>
       </div>
+
+      <div class="app-version">v1.3</div>
     </div>
   `;
 
-    // --- Event Listeners ---
-    const loginBtn = document.getElementById('spotify-login-btn');
-    const clientInput = document.getElementById('client-id-input');
-    const changeBtn = document.getElementById('change-client-id');
-    const clientSection = document.getElementById('client-id-section');
+  // --- Event Listeners ---
+  const loginBtn = document.getElementById('spotify-login-btn');
+  const clientInput = document.getElementById('client-id-input');
+  const changeBtn = document.getElementById('change-client-id');
+  const clientSection = document.getElementById('client-id-section');
 
-    if (changeBtn) {
-        changeBtn.addEventListener('click', () => {
-            clientSection.style.display = '';
-            clientInput.value = '';
-            clientInput.focus();
-            loginBtn.style.opacity = '0.5';
-        });
-    }
-
-    if (clientInput) {
-        clientInput.addEventListener('input', () => {
-            const val = clientInput.value.trim();
-            if (val.length > 10) {
-                setClientId(val);
-                loginBtn.style.opacity = '1';
-            } else {
-                loginBtn.style.opacity = '0.5';
-            }
-        });
-    }
-
-    loginBtn.addEventListener('click', async () => {
-        // If client ID from input, save it first
-        if (clientInput && clientInput.value.trim().length > 10) {
-            setClientId(clientInput.value.trim());
-        }
-
-        if (!hasClientId()) {
-            clientInput?.focus();
-            return;
-        }
-
-        try {
-            await redirectToSpotifyAuth();
-        } catch (err) {
-            alert(err.message);
-        }
+  if (changeBtn) {
+    changeBtn.addEventListener('click', () => {
+      clientSection.style.display = '';
+      clientInput.value = '';
+      clientInput.focus();
+      loginBtn.style.opacity = '0.5';
     });
+  }
+
+  if (clientInput) {
+    clientInput.addEventListener('input', () => {
+      const val = clientInput.value.trim();
+      if (val.length > 10) {
+        setClientId(val);
+        loginBtn.style.opacity = '1';
+      } else {
+        loginBtn.style.opacity = '0.5';
+      }
+    });
+  }
+
+  loginBtn.addEventListener('click', async () => {
+    // If client ID from input, save it first
+    if (clientInput && clientInput.value.trim().length > 10) {
+      setClientId(clientInput.value.trim());
+    }
+
+    if (!hasClientId()) {
+      clientInput?.focus();
+      return;
+    }
+
+    try {
+      await redirectToSpotifyAuth();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
 }
