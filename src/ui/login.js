@@ -79,7 +79,7 @@ export function renderLogin(container) {
         </div>
       </div>
 
-      <div class="app-version">v1.4</div>
+      <div class="app-version">v1.5</div>
     </div>
   `;
 

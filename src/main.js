@@ -10,7 +10,7 @@ import { renderClock, destroyClock } from './ui/clock.js';
 import { renderAlarmList, destroyAlarmList } from './ui/alarmList.js';
 import { renderEditor } from './ui/alarmEditor.js';
 import { renderRingingOverlay } from './ui/alarmRinging.js';
-import { unlockAudio, playAlarmSound } from './alarmSound.js';
+import { unlockAudio, playAlarmSound, stopAlarmSound } from './alarmSound.js';
 
 // --- DOM References ---
 const loadingScreen = document.getElementById('loading-screen');
@@ -78,7 +78,7 @@ function renderMainView() {
     header.innerHTML = `
     <div class="header-left">
       <div class="header-logo">WakeWave</div>
-      <span class="header-version">v1.4</span>
+      <span class="header-version">v1.5</span>
     </div>
     <div class="header-user">
       ${currentUser?.images?.[0]?.url
@@ -139,12 +139,21 @@ function showEditorView(alarmId) {
 async function handleAlarmTrigger(alarm) {
     console.log('🔔 Alarm triggered:', alarm);
 
-    // Play the track (or fallback alarm sound)
-    const result = await triggerAlarmPlayback(alarm);
+    // ALWAYS play the fallback alarm sound first — this guarantees
+    // the user hears something even if Spotify fails
+    playAlarmSound();
 
-    // If no track was assigned, always play fallback alarm sound
-    if (!alarm.trackUri) {
-        playAlarmSound();
+    // Then try Spotify playback (if there's a track and SDK is ready)
+    if (alarm.trackUri) {
+        try {
+            const result = await triggerAlarmPlayback(alarm);
+            // If Spotify is actually playing via SDK, stop the fallback beep
+            if (result === true) {
+                setTimeout(() => stopAlarmSound(), 2000);
+            }
+        } catch (err) {
+            console.error('Spotify playback failed, keeping fallback sound:', err);
+        }
     }
 
     // Show ringing overlay
