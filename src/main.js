@@ -78,7 +78,7 @@ function renderMainView() {
     header.innerHTML = `
     <div class="header-left">
       <div class="header-logo">WakeWave</div>
-      <span class="header-version">v1.6</span>
+      <span class="header-version">v1.7</span>
     </div>
     <div class="header-user">
       ${currentUser?.images?.[0]?.url
@@ -139,16 +139,15 @@ function showEditorView(alarmId) {
 async function handleAlarmTrigger(alarm) {
     console.log('🔔 Alarm triggered:', alarm);
 
-    // ALWAYS play the fallback alarm sound first — this guarantees
-    // the user hears something even if Spotify fails
+    // Play the fallback chime immediately as a safety net
     playAlarmSound();
 
-    // Then try Spotify playback (if there's a track and SDK is ready)
+    // Then try Spotify playback (if there's a track)
     if (alarm.trackUri) {
         try {
             const result = await triggerAlarmPlayback(alarm);
-            // If Spotify is actually playing via SDK, stop the fallback beep
-            if (result === true) {
+            // If Spotify is playing (SDK or Connect), stop the chime
+            if (result === true || result === 'connect') {
                 setTimeout(() => stopAlarmSound(), 2000);
             }
         } catch (err) {

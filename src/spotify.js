@@ -132,36 +132,69 @@ export async function playTrack(trackUri) {
     await ensureValidToken();
     const token = getAccessToken();
 
-    if (!deviceId) {
-        // Mobile / no SDK: play built-in alarm sound + open Spotify
-        console.log('📱 No Playback SDK — using fallback alarm sound');
-        playAlarmSound();
-        openSpotifyDeepLink(trackUri);
-        return 'fallback';
+    // Strategy 1: Use browser SDK player if available
+    if (deviceId) {
+        try {
+            const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+                method: 'PUT',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ uris: [trackUri] }),
+            });
+            if (res.ok || res.status === 204) {
+                console.log('🎵 Playing via browser SDK player');
+                fadeInVolume(30);
+                return true;
+            }
+            console.warn('SDK play response:', res.status);
+        } catch (err) {
+            console.warn('SDK play failed:', err);
+        }
     }
 
+    // Strategy 2: Play on any active Spotify device (e.g. Spotify app on phone)
+    console.log('📱 Trying Spotify Connect — looking for active devices...');
     try {
-        await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-            method: 'PUT',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                uris: [trackUri],
-            }),
+        const devicesRes = await fetch('https://api.spotify.com/v1/me/player/devices', {
+            headers: { Authorization: `Bearer ${token}` },
         });
+        const devicesData = await devicesRes.json();
+        const devices = devicesData.devices || [];
+        console.log('🔍 Found devices:', devices.map(d => `${d.name} (${d.type}, active:${d.is_active})`));
 
-        // Gradual volume fade-in over 30 seconds
-        fadeInVolume(30);
-        return true;
+        // Pick the best device: prefer active, then any available
+        const activeDevice = devices.find(d => d.is_active) || devices[0];
+
+        if (activeDevice) {
+            console.log(`🎯 Playing on: ${activeDevice.name} (${activeDevice.type})`);
+            const playRes = await fetch(
+                `https://api.spotify.com/v1/me/player/play?device_id=${activeDevice.id}`, {
+                method: 'PUT',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ uris: [trackUri] }),
+            });
+            if (playRes.ok || playRes.status === 204) {
+                console.log('🎵 Playing via Spotify Connect!');
+                return 'connect';
+            }
+            console.warn('Connect play response:', playRes.status);
+        } else {
+            console.log('📵 No Spotify devices found');
+        }
     } catch (err) {
-        console.error('Failed to play track:', err);
-        // Fallback: play alarm sound + open Spotify
-        playAlarmSound();
-        openSpotifyDeepLink(trackUri);
-        return 'fallback';
+        console.warn('Spotify Connect failed:', err);
     }
+
+    // Strategy 3: Last resort — chime + open Spotify app
+    console.log('⚠️ No Spotify playback available — using fallback');
+    playAlarmSound();
+    openSpotifyDeepLink(trackUri);
+    return 'fallback';
 }
 
 async function fadeInVolume(durationSeconds) {
@@ -185,10 +218,21 @@ async function fadeInVolume(durationSeconds) {
 export async function pausePlayback() {
     // Stop fallback alarm sound
     stopAlarmSound();
-    // Stop Spotify player
+    // Stop Spotify browser player
     if (player) {
         await player.pause().catch(() => { });
     }
+    // Also pause via Spotify Connect API (for phone/other devices)
+    try {
+        await ensureValidToken();
+        const token = getAccessToken();
+        if (token) {
+            await fetch('https://api.spotify.com/v1/me/player/pause', {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${token}` },
+            }).catch(() => { });
+        }
+    } catch { }
 }
 
 export async function resumePlayback() {
